@@ -1,0 +1,712 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Habit Garden</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    const CATEGORIES = ["study", "health", "personal", "sleep", "fitness"];
+    const CAT_COLORS = {
+      study: "#7c9e6e",
+      health: "#e08b5a",
+      personal: "#8b7ec8",
+      sleep: "#5a9ec8",
+      fitness: "#c87e8b",
+    };
+
+    const GROWTH_STAGES = [
+      { min: 0, label: "Bare Soil", emoji: "🪨", desc: "Plant your first habit seed!", color: "#a0856b" },
+      { min: 1, label: "Seedling", emoji: "🌱", desc: "A tiny sprout appears!", color: "#7db87d" },
+      { min: 3, label: "Sprout", emoji: "🪴", desc: "Growing stronger!", color: "#5ea85e" },
+      { min: 7, label: "Young Plant", emoji: "🌿", desc: "Looking lush!", color: "#3d8f3d" },
+      { min: 14, label: "Full Tree", emoji: "🌳", desc: "Magnificent!", color: "#2d6e2d" },
+      { min: 21, label: "Blooming Tree", emoji: "🌸", desc: "In full bloom!", color: "#d45f8e" },
+    ];
+
+    function getStage(streak) {
+      let s = GROWTH_STAGES[0];
+      for (const stage of GROWTH_STAGES) if (streak >= stage.min) s = stage;
+      return s;
+    }
+
+    function todayStr() {
+      return new Date().toISOString().slice(0, 10);
+    }
+
+    function WaterDrop({ x, y, onDone }) {
+      useEffect(() => {
+        const t = setTimeout(onDone, 900);
+        return () => clearTimeout(t);
+      }, []);
+
+      return (
+        <div
+          style={{
+            position: "fixed",
+            left: x,
+            top: y,
+            pointerEvents: "none",
+            zIndex: 999,
+            fontSize: 22,
+            animation: "waterFall 0.9s ease-in forwards",
+          }}
+        >
+          💧
+        </div>
+      );
+    }
+
+    function PlantVisual({ stage, wilting }) {
+      const s = getStage(stage);
+      return (
+        <div
+          style={{
+            textAlign: "center",
+            padding: "18px 0 8px",
+            filter: wilting ? "grayscale(0.6)" : "none",
+            transition: "filter 0.5s",
+          }}
+        >
+          <div style={{ fontSize: 72, lineHeight: 1, marginBottom: 6, transition: "all 0.5s" }}>{s.emoji}</div>
+          <div style={{ fontWeight: 700, fontSize: 17, color: s.color }}>{s.label}</div>
+          <div style={{ fontSize: 12, color: "#888", marginTop: 2 }}>
+            {wilting ? "🥀 Your plant needs water..." : s.desc}
+          </div>
+        </div>
+      );
+    }
+
+    function WeekGrid({ completions }) {
+      const days = [];
+      for (let i = 6; i >= 0; i--) {
+        const d = new Date();
+        d.setDate(d.getDate() - i);
+        days.push(d.toISOString().slice(0, 10));
+      }
+
+      const labels = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
+
+      return (
+        <div style={{ display: "flex", gap: 5, justifyContent: "center", margin: "8px 0" }}>
+          {days.map((d) => {
+            const done = completions?.includes(d);
+            const dow = new Date(d + "T12:00:00").getDay();
+            return (
+              <div key={d} style={{ textAlign: "center" }}>
+                <div style={{ fontSize: 10, color: "#aaa", marginBottom: 3 }}>{labels[dow]}</div>
+                <div
+                  style={{
+                    width: 26,
+                    height: 26,
+                    borderRadius: 6,
+                    background: done ? "#5ea85e" : "#e8e8e8",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: 13,
+                  }}
+                >
+                  {done ? "💧" : ""}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      );
+    }
+
+    function App() {
+      const [habits, setHabits] = useState([]);
+      const [drops, setDrops] = useState([]);
+      const [showAdd, setShowAdd] = useState(false);
+      const [newHabit, setNewHabit] = useState({ name: "", category: "study", reminder: "" });
+      const [aiMsg, setAiMsg] = useState("");
+      const [aiLoading, setAiLoading] = useState(false);
+      const [dark, setDark] = useState(false);
+      const [loaded, setLoaded] = useState(false);
+      const [editId, setEditId] = useState(null);
+      const dropId = useRef(0);
+
+      useEffect(() => {
+        try {
+          const raw = localStorage.getItem("habit-garden-data");
+          if (raw) setHabits(JSON.parse(raw));
+        } catch (_err) {}
+        setLoaded(true);
+      }, []);
+
+      useEffect(() => {
+        if (!loaded) return;
+        try {
+          localStorage.setItem("habit-garden-data", JSON.stringify(habits));
+        } catch (_err) {}
+      }, [habits, loaded]);
+
+      const today = todayStr();
+
+      function calcStreak(completions = []) {
+        let streak = 0;
+        const d = new Date();
+        while (true) {
+          const s = d.toISOString().slice(0, 10);
+          if (completions.includes(s)) {
+            streak++;
+            d.setDate(d.getDate() - 1);
+          } else {
+            break;
+          }
+        }
+        return streak;
+      }
+
+      function totalStreak() {
+        if (!habits.length) return 0;
+        return Math.round(habits.reduce((a, h) => a + calcStreak(h.completions), 0) / habits.length);
+      }
+
+      function waterHabit(id, e) {
+        const rect = e.currentTarget.getBoundingClientRect();
+        const x = rect.left + rect.width / 2 - 11;
+        const y = rect.top - 10;
+        const did = dropId.current++;
+        setDrops((p) => [...p, { id: did, x, y }]);
+
+        setHabits((p) =>
+          p.map((h) => {
+            if (h.id !== id) return h;
+            const comps = h.completions || [];
+            if (comps.includes(today)) return h;
+            return { ...h, completions: [...comps, today] };
+          })
+        );
+      }
+
+      function addHabit() {
+        if (!newHabit.name.trim()) return;
+
+        if (editId) {
+          setHabits((p) =>
+            p.map((h) =>
+              h.id === editId
+                ? { ...h, name: newHabit.name, category: newHabit.category, reminder: newHabit.reminder }
+                : h
+            )
+          );
+          setEditId(null);
+        } else {
+          setHabits((p) => [
+            ...p,
+            {
+              id: Date.now(),
+              name: newHabit.name,
+              category: newHabit.category,
+              reminder: newHabit.reminder,
+              completions: [],
+            },
+          ]);
+        }
+
+        setNewHabit({ name: "", category: "study", reminder: "" });
+        setShowAdd(false);
+      }
+
+      function deleteHabit(id) {
+        setHabits((p) => p.filter((h) => h.id !== id));
+      }
+
+      function startEdit(h) {
+        setEditId(h.id);
+        setNewHabit({ name: h.name, category: h.category, reminder: h.reminder || "" });
+        setShowAdd(true);
+      }
+
+      async function askAI() {
+        setAiLoading(true);
+        setAiMsg("");
+
+        const summary = habits.map((h) => ({
+          name: h.name,
+          category: h.category,
+          streak: calcStreak(h.completions),
+          completedToday: (h.completions || []).includes(today),
+          last7: (() => {
+            const days = [];
+            for (let i = 6; i >= 0; i--) {
+              const d = new Date();
+              d.setDate(d.getDate() - i);
+              days.push(d.toISOString().slice(0, 10));
+            }
+            return days.filter((d) => (h.completions || []).includes(d)).length;
+          })(),
+        }));
+
+        const overallStreak = totalStreak();
+
+        try {
+          const res = await fetch("https://api.anthropic.com/v1/messages", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              model: "claude-sonnet-4-20250514",
+              max_tokens: 1000,
+              system:
+                "You are a warm, encouraging garden coach for a student habit tracker app. The metaphor is: completing habits = watering your plant. Give short, friendly, personalized advice (3-4 sentences max) using garden/plant metaphors. Address the student directly. Be specific to their data.",
+              messages: [
+                {
+                  role: "user",
+                  content: `My habit garden data: ${JSON.stringify(summary)}. Overall streak: ${overallStreak} days. Today's date: ${today}. Give me personalized advice!`,
+                },
+              ],
+            }),
+          });
+
+          const data = await res.json();
+          setAiMsg(data.content?.[0]?.text || "Keep watering your garden! 🌱");
+        } catch (_err) {
+          setAiMsg("Your garden is counting on you — keep those habits going! 🌿");
+        }
+
+        setAiLoading(false);
+      }
+
+      const bg = dark ? "#1a2318" : "#f4f9f0";
+      const card = dark ? "#243020" : "#fff";
+      const text = dark ? "#e0eed8" : "#2d4a22";
+      const sub = dark ? "#8aaa78" : "#6a8f5a";
+      const border = dark ? "#3a5030" : "#d4e8c8";
+
+      const streak = totalStreak();
+      const stage = getStage(streak);
+      const wilting =
+        habits.length > 0 &&
+        habits.every((h) => !(h.completions || []).includes(today)) &&
+        habits.some((h) => (h.completions || []).length > 0);
+      const todayDone = habits.filter((h) => (h.completions || []).includes(today)).length;
+      const healthPct = habits.length ? Math.round((todayDone / habits.length) * 100) : 0;
+
+      return (
+        <div
+          style={{
+            minHeight: "100vh",
+            background: bg,
+            color: text,
+            fontFamily: "'Segoe UI', sans-serif",
+            padding: "0 0 60px",
+          }}
+        >
+          <style>{`
+            @keyframes waterFall {
+              0% { opacity: 1; transform: translateY(0); }
+              100% { opacity: 0; transform: translateY(60px); }
+            }
+            @keyframes pop {
+              0% { transform: scale(1); }
+              50% { transform: scale(1.18); }
+              100% { transform: scale(1); }
+            }
+            .water-btn:active { animation: pop 0.2s ease; }
+            * { box-sizing: border-box; }
+            ::-webkit-scrollbar { width: 6px; }
+            ::-webkit-scrollbar-thumb { background: #acd4a0; border-radius: 3px; }
+            body { margin: 0; }
+            button, input, select { font-family: inherit; }
+          `}</style>
+
+          {drops.map((d) => (
+            <WaterDrop key={d.id} x={d.x} y={d.y} onDone={() => setDrops((p) => p.filter((x) => x.id !== d.id))} />
+          ))}
+
+          <div
+            style={{
+              background: dark ? "#162014" : "#e8f5e0",
+              padding: "16px 20px",
+              borderBottom: `1px solid ${border}`,
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+            }}
+          >
+            <div>
+              <div style={{ fontWeight: 800, fontSize: 20, color: text }}>🌱 Habit Garden</div>
+              <div style={{ fontSize: 12, color: sub }}>Water your habits, grow your life</div>
+            </div>
+            <button
+              onClick={() => setDark((d) => !d)}
+              style={{
+                background: "none",
+                border: `1px solid ${border}`,
+                borderRadius: 20,
+                padding: "5px 12px",
+                cursor: "pointer",
+                color: text,
+                fontSize: 13,
+              }}
+            >
+              {dark ? "☀️ Light" : "🌙 Dark"}
+            </button>
+          </div>
+
+          <div style={{ maxWidth: 480, margin: "0 auto", padding: "0 16px" }}>
+            <div
+              style={{
+                background: card,
+                borderRadius: 16,
+                border: `1px solid ${border}`,
+                margin: "16px 0 12px",
+                padding: "4px 16px 16px",
+              }}
+            >
+              <PlantVisual stage={streak} wilting={wilting} />
+              <div style={{ display: "flex", gap: 10, justifyContent: "center", margin: "10px 0 6px" }}>
+                <div
+                  style={{
+                    background: dark ? "#1e2e1c" : "#edf7e8",
+                    borderRadius: 10,
+                    padding: "8px 16px",
+                    textAlign: "center",
+                    flex: 1,
+                  }}
+                >
+                  <div style={{ fontSize: 22, fontWeight: 800, color: stage.color }}>{streak}</div>
+                  <div style={{ fontSize: 11, color: sub }}>Day Streak 🔥</div>
+                </div>
+                <div
+                  style={{
+                    background: dark ? "#1e2e1c" : "#edf7e8",
+                    borderRadius: 10,
+                    padding: "8px 16px",
+                    textAlign: "center",
+                    flex: 1,
+                  }}
+                >
+                  <div style={{ fontSize: 22, fontWeight: 800, color: "#5ea85e" }}>{healthPct}%</div>
+                  <div style={{ fontSize: 11, color: sub }}>Garden Health 🌿</div>
+                </div>
+                <div
+                  style={{
+                    background: dark ? "#1e2e1c" : "#edf7e8",
+                    borderRadius: 10,
+                    padding: "8px 16px",
+                    textAlign: "center",
+                    flex: 1,
+                  }}
+                >
+                  <div style={{ fontSize: 22, fontWeight: 800, color: "#5a9ec8" }}>
+                    {todayDone}/{habits.length}
+                  </div>
+                  <div style={{ fontSize: 11, color: sub }}>Watered Today 💧</div>
+                </div>
+              </div>
+
+              {habits.length > 0 && (
+                <div style={{ marginTop: 6 }}>
+                  <div style={{ fontSize: 11, color: sub, textAlign: "center", marginBottom: 4 }}>This week's watering</div>
+                  <WeekGrid completions={habits.flatMap((h) => h.completions || [])} />
+                </div>
+              )}
+            </div>
+
+            <div
+              style={{
+                background: card,
+                borderRadius: 14,
+                border: `1px solid ${border}`,
+                padding: "12px 14px",
+                marginBottom: 12,
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div style={{ fontWeight: 700, fontSize: 14 }}>🌻 Garden Coach</div>
+                <button
+                  onClick={askAI}
+                  disabled={aiLoading || !habits.length}
+                  style={{
+                    background: "#5ea85e",
+                    color: "#fff",
+                    border: "none",
+                    borderRadius: 20,
+                    padding: "6px 14px",
+                    fontSize: 12,
+                    cursor: habits.length ? "pointer" : "not-allowed",
+                    opacity: habits.length ? 1 : 0.5,
+                  }}
+                >
+                  {aiLoading ? "Thinking..." : "Ask Coach"}
+                </button>
+              </div>
+
+              {aiMsg && (
+                <div
+                  style={{
+                    marginTop: 10,
+                    fontSize: 13,
+                    color: sub,
+                    lineHeight: 1.6,
+                    background: dark ? "#1a2a18" : "#f0fae8",
+                    borderRadius: 10,
+                    padding: "10px 12px",
+                  }}
+                >
+                  {aiMsg}
+                </div>
+              )}
+
+              {!aiMsg && !aiLoading && (
+                <div style={{ fontSize: 12, color: sub, marginTop: 6 }}>
+                  Get personalized tips based on your garden progress!
+                </div>
+              )}
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", margin: "4px 0 8px" }}>
+              <div style={{ fontWeight: 700, fontSize: 15 }}>My Habits</div>
+              <button
+                onClick={() => {
+                  setEditId(null);
+                  setNewHabit({ name: "", category: "study", reminder: "" });
+                  setShowAdd(true);
+                }}
+                style={{
+                  background: "#5ea85e",
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: 20,
+                  padding: "6px 16px",
+                  fontSize: 13,
+                  cursor: "pointer",
+                  fontWeight: 600,
+                }}
+              >
+                + Plant Habit
+              </button>
+            </div>
+
+            {showAdd && (
+              <div
+                style={{
+                  background: card,
+                  borderRadius: 14,
+                  border: `1px solid ${border}`,
+                  padding: "14px",
+                  marginBottom: 12,
+                }}
+              >
+                <div style={{ fontWeight: 600, marginBottom: 10, fontSize: 14 }}>
+                  {editId ? "Edit Habit" : "New Habit Seed 🌱"}
+                </div>
+
+                <input
+                  value={newHabit.name}
+                  onChange={(e) => setNewHabit((p) => ({ ...p, name: e.target.value }))}
+                  placeholder="e.g. Read for 20 minutes"
+                  style={{
+                    width: "100%",
+                    padding: "8px 10px",
+                    borderRadius: 8,
+                    border: `1px solid ${border}`,
+                    background: dark ? "#1a2818" : "#f9fff6",
+                    color: text,
+                    fontSize: 14,
+                    marginBottom: 8,
+                    outline: "none",
+                  }}
+                />
+
+                <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+                  <select
+                    value={newHabit.category}
+                    onChange={(e) => setNewHabit((p) => ({ ...p, category: e.target.value }))}
+                    style={{
+                      flex: 1,
+                      padding: "8px",
+                      borderRadius: 8,
+                      border: `1px solid ${border}`,
+                      background: dark ? "#1a2818" : "#f9fff6",
+                      color: text,
+                      fontSize: 13,
+                    }}
+                  >
+                    {CATEGORIES.map((c) => (
+                      <option key={c} value={c}>
+                        {c.charAt(0).toUpperCase() + c.slice(1)}
+                      </option>
+                    ))}
+                  </select>
+
+                  <input
+                    type="time"
+                    value={newHabit.reminder}
+                    onChange={(e) => setNewHabit((p) => ({ ...p, reminder: e.target.value }))}
+                    style={{
+                      flex: 1,
+                      padding: "8px",
+                      borderRadius: 8,
+                      border: `1px solid ${border}`,
+                      background: dark ? "#1a2818" : "#f9fff6",
+                      color: text,
+                      fontSize: 13,
+                    }}
+                  />
+                </div>
+
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    onClick={addHabit}
+                    style={{
+                      flex: 1,
+                      background: "#5ea85e",
+                      color: "#fff",
+                      border: "none",
+                      borderRadius: 10,
+                      padding: "9px",
+                      fontSize: 14,
+                      cursor: "pointer",
+                      fontWeight: 600,
+                    }}
+                  >
+                    {editId ? "Save" : "Plant it! 🌱"}
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setShowAdd(false);
+                      setEditId(null);
+                    }}
+                    style={{
+                      flex: 1,
+                      background: dark ? "#2a3828" : "#eef6ea",
+                      color: text,
+                      border: "none",
+                      borderRadius: 10,
+                      padding: "9px",
+                      fontSize: 14,
+                      cursor: "pointer",
+                    }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {habits.length === 0 && (
+              <div style={{ textAlign: "center", padding: "40px 20px", color: sub }}>
+                <div style={{ fontSize: 48 }}>🪨</div>
+                <div style={{ fontSize: 15, marginTop: 10 }}>Your garden is empty.</div>
+                <div style={{ fontSize: 13, marginTop: 4 }}>Plant your first habit to get started!</div>
+              </div>
+            )}
+
+            {habits.map((h) => {
+              const done = (h.completions || []).includes(today);
+              const habitStreak = calcStreak(h.completions);
+              const col = CAT_COLORS[h.category] || "#7db87d";
+
+              return (
+                <div
+                  key={h.id}
+                  style={{
+                    background: card,
+                    borderRadius: 14,
+                    border: `1px solid ${done ? "#5ea85e" : border}`,
+                    padding: "12px 14px",
+                    marginBottom: 10,
+                    transition: "border 0.3s",
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <span
+                          style={{
+                            background: col + "22",
+                            color: col,
+                            borderRadius: 20,
+                            padding: "2px 9px",
+                            fontSize: 11,
+                            fontWeight: 600,
+                          }}
+                        >
+                          {h.category}
+                        </span>
+                        {h.reminder && <span style={{ fontSize: 11, color: sub }}>⏰ {h.reminder}</span>}
+                      </div>
+                      <div style={{ fontWeight: 600, fontSize: 15, margin: "5px 0 2px" }}>{h.name}</div>
+                      <div style={{ fontSize: 12, color: sub }}>🔥 {habitStreak} day streak</div>
+                    </div>
+
+                    <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
+                      <button
+                        className="water-btn"
+                        onClick={(e) => !done && waterHabit(h.id, e)}
+                        style={{
+                          background: done ? "#c8eac8" : "#5ea85e",
+                          color: done ? "#3a7a3a" : "#fff",
+                          border: "none",
+                          borderRadius: 20,
+                          padding: "7px 14px",
+                          fontSize: 13,
+                          cursor: done ? "default" : "pointer",
+                          fontWeight: 600,
+                          minWidth: 90,
+                          transition: "all 0.2s",
+                        }}
+                      >
+                        {done ? "✅ Watered" : "💧 Water"}
+                      </button>
+
+                      <div style={{ display: "flex", gap: 6 }}>
+                        <button
+                          onClick={() => startEdit(h)}
+                          style={{
+                            background: "none",
+                            border: `1px solid ${border}`,
+                            borderRadius: 8,
+                            padding: "3px 9px",
+                            fontSize: 11,
+                            cursor: "pointer",
+                            color: sub,
+                          }}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => deleteHabit(h.id)}
+                          style={{
+                            background: "none",
+                            border: "1px solid #e8a0a0",
+                            borderRadius: 8,
+                            padding: "3px 9px",
+                            fontSize: 11,
+                            cursor: "pointer",
+                            color: "#c07070",
+                          }}
+                        >
+                          🗑
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <WeekGrid completions={h.completions || []} />
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>
